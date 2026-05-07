@@ -32,10 +32,29 @@ body { background-color: var(--bg-dark); color: #c9d1d9; font-family: 'Segoe UI'
 .cursor-pointer tbody tr { cursor: pointer; transition: 0.2s; }
 .cursor-pointer tbody tr:hover { background: #2a3545; }
 
+/* Filter Bar */
+#severityFilter .btn { font-size: 0.78rem; padding: 3px 10px; }
+#severityFilter .btn.active { z-index: 0; }
+#alertCount { font-size: 0.78rem; white-space: nowrap; }
+
+/* MITRE Tags */
+.mitre-tag { display: inline-block; background: rgba(57, 197, 255, 0.12); color: var(--cyan); border: 1px solid rgba(57, 197, 255, 0.3); padding: 2px 10px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; margin: 2px 4px 2px 0; }
+
+/* Incident accordion scroll */
+#incidentAccordion { max-height: 420px; overflow-y: auto; }
+#incidentAccordion::-webkit-scrollbar { width: 4px; }
+#incidentAccordion::-webkit-scrollbar-track { background: transparent; }
+#incidentAccordion::-webkit-scrollbar-thumb { background: #2a3545; border-radius: 2px; }
+
+/* Progress bars dark theme override */
+.progress { background-color: #1a2332; border-radius: 4px; }
+.progress-bar { border-radius: 4px; }
+
 /* Utility */
 .sev-CRITICAL { background: var(--red); color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.8rem;}
 .sev-HIGH { color: var(--red); font-weight: bold;} .sev-MEDIUM { color: var(--yellow); } .sev-LOW { color: var(--green); }
 .endpoint-card { padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background: #0d1219; margin-bottom: 10px; text-align: center;}
+.endpoint-card small { font-size: 0.7rem; word-break: break-all; display: block; }
 .ep-clean { border-left: 4px solid var(--green); } .ep-comp { border-left: 4px solid var(--red); background: rgba(255, 71, 87, 0.1); animation: blinker 2s infinite;}
 @keyframes fadeIn { to { opacity: 1; } }
 @keyframes blinker { 50% { opacity: 0.5; } }
