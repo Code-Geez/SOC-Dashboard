@@ -123,9 +123,18 @@ async function fetchDashboardData() {
         document.querySelectorAll('.mitre-cell').forEach(c => c.classList.remove('mitre-active'));
         data.incidents.forEach(inc => { if(inc.status === 'Active') inc.mitre_ids.forEach(id => { let cell = document.getElementById(id); if(cell) cell.classList.add('mitre-active'); }); });
 
-        document.getElementById('huntTableBody').innerHTML = data.alerts.map((a, i) => `
-            <tr onclick="showPcap(${i})"><td>${a.timestamp}</td><td class="text-cyan">${a.ip}</td><td>${a.host}</td><td>${a.type}</td><td><span class="sev-${a.severity}">${a.severity}</span></td></tr>
-        `).join('');
+        const searchQuery = document.getElementById('huntSearch') ? document.getElementById('huntSearch').value.toLowerCase() : "";
+        
+        const filteredAlerts = data.alerts.filter(a => 
+            a.ip.toLowerCase().includes(searchQuery) || 
+            a.host.toLowerCase().includes(searchQuery) || 
+            a.type.toLowerCase().includes(searchQuery)
+        );
+
+        document.getElementById('huntTableBody').innerHTML = filteredAlerts.map((a, i) => {
+            const originalIndex = data.alerts.indexOf(a);
+            return `<tr onclick="showPcap(${originalIndex})"><td>${a.timestamp}</td><td class="text-cyan">${a.ip}</td><td>${a.host}</td><td>${a.type}</td><td><span class="sev-${a.severity}">${a.severity}</span></td></tr>`;
+        }).join('');
 
     } catch (e) { 
         console.error("Dashboard Watchdog: Connection to Flask server lost.", e);
@@ -139,6 +148,10 @@ function showPcap(index) {
     document.getElementById('pcapMeta').innerHTML = `<strong>Src:</strong> ${alert.ip} <br><strong>Dst:</strong> ${alert.host} <br><strong>MITRE:</strong> ${alert.mitre} <br><hr><span class="text-cyan">Payload Extraction:</span><br>${alert.raw}`;
     document.getElementById('pcapHex').innerText = alert.pcap;
     new bootstrap.Modal(document.getElementById('pcapModal')).show();
+}
+
+if(document.getElementById('huntSearch')) {
+    document.getElementById('huntSearch').addEventListener('input', fetchDashboardData);
 }
 
 fetchDashboardData();
