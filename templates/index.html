@@ -12,7 +12,6 @@
     <nav class="navbar navbar-dark bg-dark-custom shadow-sm sticky-top">
         <div class="container-fluid px-4">
             <span class="navbar-brand mb-0 h4 text-cyan fw-bold"><i class="fa-solid fa-satellite-dish me-2"></i>Nexus SOAR Platform</span>
-            
             <div class="d-flex align-items-center">
                 <div class="form-check form-switch me-4 border border-secondary rounded px-3 py-1 bg-dark">
                     <input class="form-check-input ms-0 me-2" type="checkbox" id="liveModeToggle">
@@ -34,27 +33,13 @@
         </ul>
 
         <div class="tab-content">
-            <!-- TAB 1: GLOBAL RADAR -->
             <div class="tab-pane fade show active" id="execTab">
                 <div class="row">
-                    <div class="col-md-9">
-                        <div class="panel-box p-0 border-cyan position-relative shadow-lg">
-                            <div class="map-overlay" id="mapStatusOverlay">SIMULATED TELEMETRY</div>
-                            <div id="attackMap" style="height: 500px; border-radius: 6px;"></div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="panel-box h-100 d-flex flex-column align-items-center justify-content-start text-center py-4">
-                            <h5 class="text-muted text-uppercase mb-3 fw-bold">Security Posture</h5>
-                            <div class="score-circle mb-4 mt-2" id="postureScore">100</div>
-                            <h6 class="border-bottom pb-2 text-white w-100 mt-4 mb-3">Monitored Endpoints</h6>
-                            <div class="row w-100" id="endpointsContainer"></div>
-                        </div>
-                    </div>
+                    <div class="col-md-9"><div class="panel-box p-0 border-cyan position-relative shadow-lg"><div class="map-overlay" id="mapStatusOverlay">SIMULATED TELEMETRY</div><div id="attackMap" style="height: 500px; border-radius: 6px;"></div></div></div>
+                    <div class="col-md-3"><div class="panel-box h-100 d-flex flex-column align-items-center justify-content-start text-center py-4"><h5 class="text-muted text-uppercase mb-3 fw-bold">Security Posture</h5><div class="score-circle mb-4 mt-2" id="postureScore">100</div><h6 class="border-bottom pb-2 text-white w-100 mt-4 mb-3">Monitored Endpoints</h6><div class="row w-100" id="endpointsContainer"></div></div></div>
                 </div>
             </div>
 
-            <!-- TAB 2: SOAR PLAYBOOKS -->
             <div class="tab-pane fade" id="incidentsTab">
                 <div class="row">
                     <div class="col-md-7"><div class="panel-box"><h5 class="text-white border-bottom pb-2 mb-3"><i class="fa-solid fa-robot text-cyan"></i> SOAR Active Incidents</h5><div class="accordion" id="incidentAccordion"></div></div></div>
@@ -62,7 +47,6 @@
                 </div>
             </div>
 
-            <!-- TAB 3: MITRE MATRIX -->
             <div class="tab-pane fade" id="mitreTab">
                 <div class="panel-box">
                     <h5 class="text-white border-bottom pb-2 mb-3"><i class="fa-solid fa-table-cells"></i> MITRE ATT&CK® Heatmap</h5>
@@ -76,26 +60,15 @@
                 </div>
             </div>
 
-            <!-- TAB 4: THREAT HUNTING -->
             <div class="tab-pane fade" id="huntTab">
                 <div class="panel-box">
                     <div class="row mb-3 align-items-center">
-                        <div class="col-md-6">
-                            <div class="input-group">
-                                <span class="input-group-text bg-dark border-secondary text-cyan"><i class="fa-solid fa-magnifying-glass"></i></span>
-                                <input type="text" id="huntSearch" class="form-control bg-dark text-white border-secondary" placeholder="Search IP, Host, or Signature...">
-                            </div>
-                        </div>
-                        <div class="col-md-6 text-end">
-                            <span class="text-muted small"><i class="fa-solid fa-circle-info"></i> Click any row to view PCAP Hex Dump.</span>
-                        </div>
+                        <div class="col-md-6"><div class="input-group"><span class="input-group-text bg-dark border-secondary text-cyan"><i class="fa-solid fa-magnifying-glass"></i></span><input type="text" id="huntSearch" class="form-control bg-dark text-white border-secondary" placeholder="Search IP, Host, or Signature..."></div></div>
+                        <div class="col-md-6 text-end"><span class="text-muted small"><i class="fa-solid fa-circle-info"></i> Click any row to view PCAP & VirusTotal Data.</span></div>
                     </div>
-                    
                     <div class="table-responsive" style="max-height: 450px; overflow-y: auto;">
                         <table class="table table-dark table-hover soc-table cursor-pointer align-middle">
-                            <thead class="sticky-top bg-dark-custom">
-                                <tr><th>Time</th><th>Source IP</th><th>Target Host</th><th>Detection Signature</th><th>Severity</th></tr>
-                            </thead>
+                            <thead class="sticky-top bg-dark-custom"><tr><th>Time</th><th>Source IP</th><th>Target Host</th><th>Detection Signature</th><th>Severity</th></tr></thead>
                             <tbody id="huntTableBody"></tbody>
                         </table>
                     </div>
@@ -104,14 +77,21 @@
         </div>
     </div>
 
-    <!-- PCAP MODAL -->
     <div class="modal fade" id="pcapModal" tabindex="-1">
         <div class="modal-dialog modal-xl">
             <div class="modal-content bg-dark-custom text-white border-cyan shadow-lg">
-                <div class="modal-header border-secondary"><h5 class="modal-title text-cyan"><i class="fa-solid fa-microscope"></i> Raw Packet Capture Inspection</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+                <div class="modal-header border-secondary"><h5 class="modal-title text-cyan"><i class="fa-solid fa-shield-halved"></i> Threat Intel & PCAP Inspection</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
                 <div class="modal-body">
                     <div class="row">
-                        <div class="col-md-4 border-end border-secondary"><h6 class="text-muted border-bottom pb-2 mb-3">Packet Metadata</h6><div id="pcapMeta" class="small font-monospace" style="line-height: 1.8;"></div></div>
+                        <div class="col-md-4 border-end border-secondary">
+                            <h6 class="text-muted border-bottom pb-2 mb-3">Packet Metadata</h6>
+                            <div id="pcapMeta" class="small font-monospace mb-4" style="line-height: 1.8;"></div>
+                            
+                            <h6 class="text-muted border-bottom pb-2 mb-3">VirusTotal Integration</h6>
+                            <div id="vtContainer" class="p-3 bg-dark border border-secondary rounded text-center">
+                                <i class="fa-solid fa-spinner fa-spin text-cyan"></i> Querying VirusTotal...
+                            </div>
+                        </div>
                         <div class="col-md-8"><h6 class="text-muted border-bottom pb-2 mb-3">Hex Dump</h6><pre id="pcapHex" class="hex-dump"></pre></div>
                     </div>
                 </div>

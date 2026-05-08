@@ -1,13 +1,13 @@
 from flask import Flask, render_template, jsonify, request
-import os, re, time, threading, subprocess
+import os, re, time, threading, subprocess, json, urllib.request
 from datetime import datetime
 
 app = Flask(__name__)
 
-# --- FILE PATHS ---
-SIMULATED_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'simulated_logs.txt')
+DISCORD_WEBHOOK_URL = ""
+VT_API_KEY = ""
 
-# --- STATE ---
+SIMULATED_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'simulated_logs.txt')
 MODE = "SIMULATED"
 alerts =[]
 incidents = {}
@@ -32,6 +32,25 @@ KILL_CHAIN = {
     "Failed Privilege Escalation": {"stage": "Privilege Escalation", "mitre": "T1068"}
 }
 
+def send_discord_alert(inc_id, ip, target, threat_type):
+    if not DISCORD_WEBHOOK_URL: return
+    data = {
+        "content": f"🚨 **CRITICAL INCIDENT DETECTED: {inc_id}** 🚨",
+        "embeds":[{
+            "title": threat_type, "color": 16711680,
+            "fields":[
+                {"name": "Attacker IP", "value": ip, "inline": True},
+                {"name": "Target Host", "value": target, "inline": True},
+                {"name": "Status", "value": "Awaiting SOAR Playbook Execution", "inline": False}
+            ],
+            "footer": {"text": "Nexus SOAR Platform"}
+        }]
+    }
+    try:
+        req = urllib.request.Request(DISCORD_WEBHOOK_URL, data=json.dumps(data).encode(), headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}, method='POST')
+        urllib.request.urlopen(req, timeout=3)
+    except Exception as e: print(f"[!] Discord Webhook Failed: {e}")
+
 def generate_hex_dump(payload_str):
     raw_bytes = payload_str.encode('utf-8')
     hex_dump = ""
@@ -46,20 +65,13 @@ def register_alert(timestamp, threat_type, severity, ip, host, raw_action):
     geo = GEO_DB.get(ip, {"lat": 0, "lng": 0, "country": "Unknown"})
     pcap = generate_hex_dump(f"IP {ip} > {host} : {raw_action}")
 
-    alert = {
-        "id": f"ALT-{len(alerts)+1}", "timestamp": timestamp, "type": threat_type, 
-        "severity": severity, "ip": ip, "host": host, "stage": meta['stage'], 
-        "mitre": meta['mitre'], "geo": geo, "pcap": pcap, "raw": raw_action
-    }
+    alert = {"id": f"ALT-{len(alerts)+1}", "timestamp": timestamp, "type": threat_type, "severity": severity, "ip": ip, "host": host, "stage": meta['stage'], "mitre": meta['mitre'], "geo": geo, "pcap": pcap, "raw": raw_action}
     alerts.insert(0, alert)
     
     if host in endpoints_state and severity in ["HIGH", "CRITICAL"]: endpoints_state[host] = "Compromised"
 
     if ip not in incidents or incidents[ip]['status'] == 'RESOLVED':
-        incidents[ip] = {
-            "id": f"INC-{incident_counter:04d}", "ip": ip, "target": host, "status": "Active", 
-            "severity": severity, "confidence": 30, "events":[], "stages": set(), "mitre_ids": set()
-        }
+        incidents[ip] = {"id": f"INC-{incident_counter:04d}", "ip": ip, "target": host, "status": "Active", "severity": severity, "confidence": 30, "events":[], "stages": set(), "mitre_ids": set()}
         incident_counter += 1
 
     inc = incidents[ip]
@@ -68,13 +80,18 @@ def register_alert(timestamp, threat_type, severity, ip, host, raw_action):
     inc['mitre_ids'].add(meta['mitre'])
     inc['confidence'] = min(100, inc['confidence'] + 15)
     
+    is_new_critical = False
     if len(inc['stages']) >= 3:
+        if inc['severity'] != "CRITICAL": is_new_critical = True
         inc['severity'] = "CRITICAL"
         inc['type'] = "MULTI-STAGE ATTACK DETECTED"
     else:
-        if severity in ["HIGH", "CRITICAL"]: inc['severity'] = severity
+        if severity in ["HIGH", "CRITICAL"]: 
+            if inc['severity'] != severity and severity == "CRITICAL": is_new_critical = True
+            inc['severity'] = severity
         inc['type'] = threat_type
 
+    if is_new_critical: send_discord_alert(inc['id'], ip, host, inc['type'])
     if len(alerts) > 200: alerts.pop()
 
 def analyze_sim_log(line):
@@ -100,26 +117,21 @@ def analyze_live_log(line):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     threat_type, severity = "", "LOW"
-    
     if "su:" in line_lower or "sudo:" in line_lower or "su[" in line_lower:
         if "authentication failure" in line_lower or "incorrect password" in line_lower or "failed" in line_lower:
             threat_type, severity = "Failed Privilege Escalation", "CRITICAL"
-            
     elif "sshd" in line_lower or "ssh" in line_lower:
         if "failed password" in line_lower or "authentication failure" in line_lower:
             threat_type, severity = "SSH Brute Force Detected", "HIGH"
     
-    if threat_type:
-        register_alert(timestamp, threat_type, severity, ip, "KALI-LOCAL", line.strip())
+    if threat_type: register_alert(timestamp, threat_type, severity, ip, "KALI-LOCAL", line.strip())
 
 def tail_journalctl():
     try:
         proc = subprocess.Popen(['journalctl', '-f', '-n', '0'], stdout=subprocess.PIPE, text=True)
         for line in iter(proc.stdout.readline, ''):
-            if MODE == "LIVE":
-                analyze_live_log(line)
-    except Exception as e:
-        print(f"[!] Kernel Hook Error: {e}")
+            if MODE == "LIVE": analyze_live_log(line)
+    except Exception as e: print(f"[!] Kernel Hook Error: {e}")
 
 def read_logs():
     global last_sim_pos
@@ -144,13 +156,32 @@ def toggle_mode():
     endpoints_state = {k: "Clean" for k in endpoints_state}
     return jsonify({"status": "success", "mode": MODE})
 
+@app.route('/api/vt/<ip>')
+def get_virustotal(ip):
+    if not VT_API_KEY or ip == "127.0.0.1" or ip.startswith("192.168.") or ip.startswith("10."):
+        malicious = 0
+        if ip in["185.15.59.222", "198.51.100.23", "203.0.113.44"]: malicious = 68
+        return jsonify({"stats": {"malicious": malicious, "harmless": 20, "suspicious": 2, "undetected": 4}, "network": "Simulated ISP Network", "country": GEO_DB.get(ip, {}).get("country", "Unknown")})
+    
+    url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip}"
+    req = urllib.request.Request(url, headers={'x-apikey': VT_API_KEY})
+    try:
+        response = urllib.request.urlopen(req, timeout=5)
+        data = json.loads(response.read().decode('utf-8'))
+        stats = data['data']['attributes']['last_analysis_stats']
+        network = data['data']['attributes'].get('network', 'Unknown Network')
+        country = data['data']['attributes'].get('country', 'Unknown')
+        return jsonify({"stats": stats, "network": network, "country": country})
+    except Exception as e:
+        return jsonify({"error": str(e), "stats": {"malicious": 0, "harmless": 0}})
+
 @app.route('/api/data')
 def get_data():
     read_logs()
     active_incs =[i for i in incidents.values() if i['status'] != 'RESOLVED']
     score = max(0, min(100, 100 - (len(active_incs) * 5) - (sum(1 for i in active_incs if i['severity'] == 'CRITICAL') * 10)))
     
-    formatted_incs = []
+    formatted_incs =[]
     for inc in sorted(incidents.values(), key=lambda x: x['confidence'], reverse=True):
         f_inc = inc.copy()
         f_inc['stages'] = list(inc['stages'])
@@ -183,12 +214,4 @@ def trigger_demo():
 
 if __name__ == '__main__':
     threading.Thread(target=tail_journalctl, daemon=True).start()
-    
-    if os.geteuid() != 0:
-        print("\n" + "="*50)
-        print("[WARNING] You are not running as root (sudo).")
-        print("LIVE OS MODE might fail to read kernel logs.")
-        print("To fix: sudo python3 app.py")
-        print("="*50 + "\n")
-        
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)

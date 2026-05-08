@@ -1,7 +1,8 @@
 let currentAlerts =[];
+let globalIncidents =[];
 let map;
 let processedAlertIds = new Set();
-const DC_LATLNG =[38.8951, -77.0364]; 
+const DC_LATLNG = [38.8951, -77.0364]; 
 
 function initMap() {
     map = L.map('attackMap', { zoomControl: false, attributionControl: false }).setView([20, 0], 2);
@@ -31,54 +32,52 @@ document.getElementById('liveModeToggle').addEventListener('change', async funct
         label.innerHTML = '<i class="fa-solid fa-biohazard"></i> LIVE KALI OS MODE';
         label.className = 'form-check-label text-danger fw-bold blink';
         overlay.innerText = "WARNING: LIVE KALI TELEMETRY ACTIVE";
-        overlay.style.color = "#ff4757";
-        overlay.style.borderColor = "#ff4757";
+        overlay.style.color = "#ff4757"; overlay.style.borderColor = "#ff4757";
         demoBtn.disabled = true;
     } else {
         label.innerHTML = '<i class="fa-solid fa-vial"></i> SIMULATOR MODE';
         label.className = 'form-check-label text-warning fw-bold';
         overlay.innerText = "SIMULATED TELEMETRY";
-        overlay.style.color = "#39c5ff";
-        overlay.style.borderColor = "#39c5ff";
+        overlay.style.color = "#39c5ff"; overlay.style.borderColor = "#39c5ff";
         demoBtn.disabled = false;
     }
 
     map.eachLayer((layer) => { if (layer instanceof L.CircleMarker || layer instanceof L.Polyline) { map.removeLayer(layer); } });
     processedAlertIds.clear();
 
-    try {
-        await fetch('/api/toggle_mode', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mode: isLive ? 'LIVE' : 'SIMULATED' })
-        });
-    } catch (e) {
-        console.error("Backend offline. Cannot switch modes.");
-    }
+    try { await fetch('/api/toggle_mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: isLive ? 'LIVE' : 'SIMULATED' }) }); } catch (e) { }
 });
 
 async function runPlaybook(ip, incId) {
-    const term = document.getElementById('soarTerminal');
-    term.innerHTML = '';
-    const steps = [`> Initializing SOAR Playbook for ${incId}`, `> [ACTION] Pushing block rule for Attacker IP: ${ip}`, `> Isolating affected host...`, `> Remediation Complete.`];
+    const term = document.getElementById('soarTerminal'); term.innerHTML = '';
+    const steps = [`> Initializing SOAR Playbook for ${incId}`, `> [API] Fetching Firewall Rules...`, `> [ACTION] Pushing drop rule for Attacker IP: ${ip}`, `> [ACTION] Isolating affected host from internal network.`, `> Remediation Complete. Closing Ticket.`];
     for(let i=0; i<steps.length; i++) {
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 400));
         let div = document.createElement('div'); div.className = 'soar-line'; div.innerText = steps[i];
         if(steps[i].includes('ACTION')) div.style.color = '#39c5ff';
-        term.appendChild(div);
-        term.scrollTop = term.scrollHeight;
+        term.appendChild(div); term.scrollTop = term.scrollHeight;
     }
-    try {
-        await fetch(`/api/incident/${ip}/action`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action: "RESOLVE"})});
-    } catch(e) { console.error("Failed to resolve incident."); }
+    try { await fetch(`/api/incident/${ip}/action`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action: "RESOLVE"})}); } catch(e){}
+}
+
+function downloadReport(incId) {
+    const inc = globalIncidents.find(i => i.id === incId);
+    if(!inc) return;
+    
+    let csv = "Timestamp,Source IP,Target Host,Threat Type,Severity,MITRE Tactic\n";
+    inc.events.forEach(e => { csv += `${e.timestamp},${e.ip},${e.host},${e.type},${e.severity},${e.mitre}\n`; });
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.setAttribute('href', url);
+    a.setAttribute('download', `Forensics_Report_${incId}.csv`);
+    a.click();
 }
 
 document.getElementById('demoBtn').addEventListener('click', async function() {
     this.disabled = true; this.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Attacking...';
-    try {
-        await fetch('/api/demo_attack');
-    } catch(e) {
-        console.error("Demo API unreachable.");
-    }
+    try { await fetch('/api/demo_attack'); } catch(e){}
     setTimeout(() => { this.disabled = false; this.innerHTML = '<i class="fa-solid fa-bolt"></i> Launch Simulation'; }, 4000);
 });
 
@@ -86,16 +85,15 @@ async function fetchDashboardData() {
     try {
         const res = await fetch('/api/data');
         if (!res.ok) throw new Error("Server returned " + res.status);
-        
         const data = await res.json();
         currentAlerts = data.alerts;
+        globalIncidents = data.incidents;
         
         data.alerts.forEach(plotAttackOnMap);
         document.getElementById('postureScore').innerText = data.score;
         document.getElementById('postureScore').className = 'score-circle ' + (data.score < 60 ? 'score-critical' : data.score < 90 ? 'score-warning' : '');
         
-        const epContainer = document.getElementById('endpointsContainer');
-        epContainer.innerHTML = '';
+        const epContainer = document.getElementById('endpointsContainer'); epContainer.innerHTML = '';
         for (const[host, state] of Object.entries(data.endpoints)) {
             if(data.mode === "SIMULATED" && host === "KALI-LOCAL") continue;
             let cls = state === "Clean" ? "ep-clean" : "ep-comp text-danger";
@@ -113,7 +111,10 @@ async function fetchDashboardData() {
                         <div id="col${inc.id}" class="accordion-collapse collapse" data-bs-parent="#incidentAccordion">
                             <div class="accordion-body">
                                 <div><strong>Target:</strong> ${inc.target}</div>
-                                <button class="btn btn-danger btn-sm mt-2 w-100" onclick="runPlaybook('${inc.ip}', '${inc.id}')"><i class="fa-solid fa-play"></i> Execute Automated Playbook</button>
+                                <div class="mt-3 d-flex gap-2">
+                                    <button class="btn btn-danger btn-sm flex-fill" onclick="runPlaybook('${inc.ip}', '${inc.id}')"><i class="fa-solid fa-play"></i> Run Playbook</button>
+                                    <button class="btn btn-outline-info btn-sm" onclick="downloadReport('${inc.id}')"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
+                                </div>
                             </div>
                         </div>
                     </div>`;
@@ -123,35 +124,40 @@ async function fetchDashboardData() {
         document.querySelectorAll('.mitre-cell').forEach(c => c.classList.remove('mitre-active'));
         data.incidents.forEach(inc => { if(inc.status === 'Active') inc.mitre_ids.forEach(id => { let cell = document.getElementById(id); if(cell) cell.classList.add('mitre-active'); }); });
 
-        const searchQuery = document.getElementById('huntSearch') ? document.getElementById('huntSearch').value.toLowerCase() : "";
-        
-        const filteredAlerts = data.alerts.filter(a => 
-            a.ip.toLowerCase().includes(searchQuery) || 
-            a.host.toLowerCase().includes(searchQuery) || 
-            a.type.toLowerCase().includes(searchQuery)
-        );
-
-        document.getElementById('huntTableBody').innerHTML = filteredAlerts.map((a, i) => {
-            const originalIndex = data.alerts.indexOf(a);
-            return `<tr onclick="showPcap(${originalIndex})"><td>${a.timestamp}</td><td class="text-cyan">${a.ip}</td><td>${a.host}</td><td>${a.type}</td><td><span class="sev-${a.severity}">${a.severity}</span></td></tr>`;
+        const sq = document.getElementById('huntSearch') ? document.getElementById('huntSearch').value.toLowerCase() : "";
+        const filt = data.alerts.filter(a => a.ip.toLowerCase().includes(sq) || a.host.toLowerCase().includes(sq) || a.type.toLowerCase().includes(sq));
+        document.getElementById('huntTableBody').innerHTML = filt.map((a, i) => {
+            const origIdx = data.alerts.indexOf(a);
+            return `<tr onclick="showPcap(${origIdx})"><td>${a.timestamp}</td><td class="text-cyan">${a.ip}</td><td>${a.host}</td><td>${a.type}</td><td><span class="sev-${a.severity}">${a.severity}</span></td></tr>`;
         }).join('');
 
-    } catch (e) { 
-        console.error("Dashboard Watchdog: Connection to Flask server lost.", e);
-    } finally {
-        setTimeout(fetchDashboardData, 1500); 
-    }
+    } catch (e) {} finally { setTimeout(fetchDashboardData, 1500); }
 }
 
-function showPcap(index) {
+async function showPcap(index) {
     const alert = currentAlerts[index];
     document.getElementById('pcapMeta').innerHTML = `<strong>Src:</strong> ${alert.ip} <br><strong>Dst:</strong> ${alert.host} <br><strong>MITRE:</strong> ${alert.mitre} <br><hr><span class="text-cyan">Payload Extraction:</span><br>${alert.raw}`;
     document.getElementById('pcapHex').innerText = alert.pcap;
+    document.getElementById('vtContainer').innerHTML = `<i class="fa-solid fa-spinner fa-spin text-cyan"></i> Querying VirusTotal...`;
+    
     new bootstrap.Modal(document.getElementById('pcapModal')).show();
+
+    try {
+        const res = await fetch(`/api/vt/${alert.ip}`);
+        const vt = await res.json();
+        
+        let vtColor = vt.stats.malicious > 0 ? 'text-danger' : 'text-success';
+        let vtIcon = vt.stats.malicious > 0 ? 'fa-skull' : 'fa-shield-check';
+        
+        document.getElementById('vtContainer').innerHTML = `
+            <div class="fs-2 ${vtColor} fw-bold"><i class="fa-solid ${vtIcon}"></i> ${vt.stats.malicious} <span class="fs-6 text-muted">/ ${vt.stats.malicious + vt.stats.harmless + vt.stats.undetected}</span></div>
+            <div class="small mt-2"><strong>Network:</strong> ${vt.network}</div>
+            <div class="small"><strong>Location:</strong> ${vt.country}</div>
+        `;
+    } catch(e) {
+        document.getElementById('vtContainer').innerHTML = `<span class="text-warning">VirusTotal Unreachable</span>`;
+    }
 }
 
-if(document.getElementById('huntSearch')) {
-    document.getElementById('huntSearch').addEventListener('input', fetchDashboardData);
-}
-
+if(document.getElementById('huntSearch')) document.getElementById('huntSearch').addEventListener('input', fetchDashboardData);
 fetchDashboardData();
