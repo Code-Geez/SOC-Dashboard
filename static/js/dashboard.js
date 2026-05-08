@@ -1,9 +1,7 @@
 let currentAlerts =[];
 let map;
 let processedAlertIds = new Set();
-const DC_LATLNG = [38.8951, -77.0364];
-const ALL_STAGES = ["Reconnaissance", "Initial Access", "Execution", "Persistence", "Privilege Escalation"];
-let huntFilter = { severity: 'ALL', search: '' };
+const DC_LATLNG =[38.8951, -77.0364]; 
 
 function initMap() {
     map = L.map('attackMap', { zoomControl: false, attributionControl: false }).setView([20, 0], 2);
@@ -48,17 +46,20 @@ document.getElementById('liveModeToggle').addEventListener('change', async funct
     map.eachLayer((layer) => { if (layer instanceof L.CircleMarker || layer instanceof L.Polyline) { map.removeLayer(layer); } });
     processedAlertIds.clear();
 
-    await fetch('/api/toggle_mode', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: isLive ? 'LIVE' : 'SIMULATED' })
-    });
-    fetchDashboardData();
+    try {
+        await fetch('/api/toggle_mode', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: isLive ? 'LIVE' : 'SIMULATED' })
+        });
+    } catch (e) {
+        console.error("Backend offline. Cannot switch modes.");
+    }
 });
 
 async function runPlaybook(ip, incId) {
     const term = document.getElementById('soarTerminal');
     term.innerHTML = '';
-    const steps =[`> Initializing SOAR Playbook for ${incId}`, `> [ACTION] Pushing block rule for Attacker IP: ${ip}`, `> Isolating affected host...`, `> Remediation Complete.`];
+    const steps = [`> Initializing SOAR Playbook for ${incId}`, `> [ACTION] Pushing block rule for Attacker IP: ${ip}`, `> Isolating affected host...`, `> Remediation Complete.`];
     for(let i=0; i<steps.length; i++) {
         await new Promise(r => setTimeout(r, 500));
         let div = document.createElement('div'); div.className = 'soar-line'; div.innerText = steps[i];
@@ -66,46 +67,26 @@ async function runPlaybook(ip, incId) {
         term.appendChild(div);
         term.scrollTop = term.scrollHeight;
     }
-    await fetch(`/api/incident/${ip}/action`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action: "RESOLVE"})});
-    fetchDashboardData();
+    try {
+        await fetch(`/api/incident/${ip}/action`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action: "RESOLVE"})});
+    } catch(e) { console.error("Failed to resolve incident."); }
 }
 
 document.getElementById('demoBtn').addEventListener('click', async function() {
     this.disabled = true; this.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Attacking...';
-    await fetch('/api/demo_attack');
+    try {
+        await fetch('/api/demo_attack');
+    } catch(e) {
+        console.error("Demo API unreachable.");
+    }
     setTimeout(() => { this.disabled = false; this.innerHTML = '<i class="fa-solid fa-bolt"></i> Launch Simulation'; }, 4000);
 });
-
-document.querySelectorAll('#severityFilter .btn').forEach(btn => {
-    btn.addEventListener('click', function() {
-        document.querySelectorAll('#severityFilter .btn').forEach(b => b.classList.remove('active'));
-        this.classList.add('active');
-        huntFilter.severity = this.dataset.severity;
-        renderHuntTable();
-    });
-});
-
-document.getElementById('huntSearch').addEventListener('input', function() {
-    huntFilter.search = this.value.toLowerCase();
-    renderHuntTable();
-});
-
-function renderHuntTable() {
-    const filtered = currentAlerts.filter(a => {
-        if (huntFilter.severity !== 'ALL' && a.severity !== huntFilter.severity) return false;
-        if (huntFilter.search && !a.ip.toLowerCase().includes(huntFilter.search) && !a.host.toLowerCase().includes(huntFilter.search)) return false;
-        return true;
-    });
-    document.getElementById('alertCount').textContent = `${filtered.length} alerts`;
-    document.getElementById('huntTableBody').innerHTML = filtered.map(a => {
-        const origIndex = currentAlerts.indexOf(a);
-        return `<tr onclick="showPcap(${origIndex})"><td>${a.timestamp}</td><td class="text-cyan">${a.ip}</td><td>${a.host}</td><td>${a.type}</td><td><span class="sev-${a.severity}">${a.severity}</span></td></tr>`;
-    }).join('');
-}
 
 async function fetchDashboardData() {
     try {
         const res = await fetch('/api/data');
+        if (!res.ok) throw new Error("Server returned " + res.status);
+        
         const data = await res.json();
         currentAlerts = data.alerts;
         
@@ -115,7 +96,7 @@ async function fetchDashboardData() {
         
         const epContainer = document.getElementById('endpointsContainer');
         epContainer.innerHTML = '';
-        for (const [host, state] of Object.entries(data.endpoints)) {
+        for (const[host, state] of Object.entries(data.endpoints)) {
             if(data.mode === "SIMULATED" && host === "KALI-LOCAL") continue;
             let cls = state === "Clean" ? "ep-clean" : "ep-comp text-danger";
             epContainer.innerHTML += `<div class="col-4"><div class="endpoint-card ${cls}"><small>${host}</small></div></div>`;
@@ -125,40 +106,13 @@ async function fetchDashboardData() {
         if(!acc.querySelector('.show')) {
             acc.innerHTML = data.incidents.length === 0 ? `<div class="p-3 text-muted">No active incidents.</div>` : '';
             data.incidents.forEach(inc => {
-                let progress = Math.round((inc.stages.length / ALL_STAGES.length) * 100);
                 let badge = inc.severity === 'CRITICAL' ? '<span class="sev-CRITICAL blink">CRITICAL</span>' : `<span class="badge bg-warning">${inc.severity}</span>`;
-                let mitreTags = inc.mitre_ids.map(id => `<span class="mitre-tag">${id}</span>`).join('');
                 acc.innerHTML += `
                     <div class="accordion-item mb-2 border border-secondary rounded">
-                        <h2 class="accordion-header">
-                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#col${inc.id}">
-                                <div class="d-flex align-items-center w-100 me-3 gap-2 flex-wrap">
-                                    <strong>${inc.id}</strong>
-                                    <span class="text-muted small">${inc.ip}</span>
-                                    <span class="badge bg-secondary">${inc.target}</span>
-                                    <span class="ms-auto">${badge}</span>
-                                </div>
-                            </button>
-                        </h2>
+                        <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#col${inc.id}"><strong>${inc.id}</strong>&nbsp;| Threat: ${inc.type} |&nbsp;${badge}</button></h2>
                         <div id="col${inc.id}" class="accordion-collapse collapse" data-bs-parent="#incidentAccordion">
                             <div class="accordion-body">
-                                <div class="row g-3 mb-3">
-                                    <div class="col-6">
-                                        <small class="text-muted d-block mb-1">Kill Chain Progress</small>
-                                        <div class="progress" style="height: 8px;">
-                                            <div class="progress-bar bg-danger" role="progressbar" style="width: ${progress}%"></div>
-                                        </div>
-                                        <small class="text-muted">${inc.stages.length}/${ALL_STAGES.length} stages</small>
-                                    </div>
-                                    <div class="col-6">
-                                        <small class="text-muted d-block mb-1">Detection Confidence</small>
-                                        <div class="progress" style="height: 8px;">
-                                            <div class="progress-bar bg-info" role="progressbar" style="width: ${inc.confidence}%"></div>
-                                        </div>
-                                        <small class="text-muted">${inc.confidence}%</small>
-                                    </div>
-                                </div>
-                                ${mitreTags ? `<div class="mb-2">${mitreTags}</div>` : ''}
+                                <div><strong>Target:</strong> ${inc.target}</div>
                                 <button class="btn btn-danger btn-sm mt-2 w-100" onclick="runPlaybook('${inc.ip}', '${inc.id}')"><i class="fa-solid fa-play"></i> Execute Automated Playbook</button>
                             </div>
                         </div>
@@ -169,9 +123,15 @@ async function fetchDashboardData() {
         document.querySelectorAll('.mitre-cell').forEach(c => c.classList.remove('mitre-active'));
         data.incidents.forEach(inc => { if(inc.status === 'Active') inc.mitre_ids.forEach(id => { let cell = document.getElementById(id); if(cell) cell.classList.add('mitre-active'); }); });
 
-        renderHuntTable();
+        document.getElementById('huntTableBody').innerHTML = data.alerts.map((a, i) => `
+            <tr onclick="showPcap(${i})"><td>${a.timestamp}</td><td class="text-cyan">${a.ip}</td><td>${a.host}</td><td>${a.type}</td><td><span class="sev-${a.severity}">${a.severity}</span></td></tr>
+        `).join('');
 
-    } catch (e) { console.error(e); }
+    } catch (e) { 
+        console.error("Dashboard Watchdog: Connection to Flask server lost.", e);
+    } finally {
+        setTimeout(fetchDashboardData, 1500); 
+    }
 }
 
 function showPcap(index) {
@@ -181,5 +141,4 @@ function showPcap(index) {
     new bootstrap.Modal(document.getElementById('pcapModal')).show();
 }
 
-setInterval(fetchDashboardData, 1500);
 fetchDashboardData();
