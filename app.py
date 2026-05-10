@@ -1,11 +1,16 @@
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
+from functools import wraps
 import os, re, time, threading, subprocess, json, urllib.request
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "fallback-secret-key-if-missing")
 
-DISCORD_WEBHOOK_URL = ""
-VT_API_KEY = ""
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
+VT_API_KEY = os.getenv("VT_API_KEY", "")
 
 SIMULATED_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'simulated_logs.txt')
 MODE = "SIMULATED"
@@ -32,19 +37,36 @@ KILL_CHAIN = {
     "Failed Privilege Escalation": {"stage": "Privilege Escalation", "mitre": "T1068"}
 }
 
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'logged_in' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        if username == 'admin' and password == 'nexus2026':
+            session['logged_in'] = True
+            return redirect(url_for('index'))
+        else:
+            return render_template('login.html', error="Invalid Operator ID or Passcode.")
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))
+
 def send_discord_alert(inc_id, ip, target, threat_type):
     if not DISCORD_WEBHOOK_URL: return
     data = {
         "content": f"🚨 **CRITICAL INCIDENT DETECTED: {inc_id}** 🚨",
-        "embeds":[{
-            "title": threat_type, "color": 16711680,
-            "fields":[
-                {"name": "Attacker IP", "value": ip, "inline": True},
-                {"name": "Target Host", "value": target, "inline": True},
-                {"name": "Status", "value": "Awaiting SOAR Playbook Execution", "inline": False}
-            ],
-            "footer": {"text": "Nexus SOAR Platform"}
-        }]
+        "embeds":[{"title": threat_type, "color": 16711680, "fields":[{"name": "Attacker IP", "value": ip, "inline": True}, {"name": "Target Host", "value": target, "inline": True}, {"name": "Status", "value": "Awaiting SOAR Playbook Execution", "inline": False}], "footer": {"text": "Nexus SOAR Platform"}}]
     }
     try:
         req = urllib.request.Request(DISCORD_WEBHOOK_URL, data=json.dumps(data).encode(), headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}, method='POST')
@@ -145,9 +167,11 @@ def read_logs():
             last_sim_pos = f.tell()
 
 @app.route('/')
+@login_required
 def index(): return render_template('index.html')
 
 @app.route('/api/toggle_mode', methods=['POST'])
+@login_required
 def toggle_mode():
     global MODE, alerts, incidents, endpoints_state
     MODE = request.json.get('mode', 'SIMULATED')
@@ -157,6 +181,7 @@ def toggle_mode():
     return jsonify({"status": "success", "mode": MODE})
 
 @app.route('/api/vt/<ip>')
+@login_required
 def get_virustotal(ip):
     if not VT_API_KEY or ip == "127.0.0.1" or ip.startswith("192.168.") or ip.startswith("10."):
         malicious = 0
@@ -172,10 +197,10 @@ def get_virustotal(ip):
         network = data['data']['attributes'].get('network', 'Unknown Network')
         country = data['data']['attributes'].get('country', 'Unknown')
         return jsonify({"stats": stats, "network": network, "country": country})
-    except Exception as e:
-        return jsonify({"error": str(e), "stats": {"malicious": 0, "harmless": 0}})
+    except Exception as e: return jsonify({"error": str(e), "stats": {"malicious": 0, "harmless": 0}})
 
 @app.route('/api/data')
+@login_required
 def get_data():
     read_logs()
     active_incs =[i for i in incidents.values() if i['status'] != 'RESOLVED']
@@ -191,6 +216,7 @@ def get_data():
     return jsonify({"alerts": alerts[:50], "incidents": formatted_incs, "endpoints": endpoints_state, "score": score, "mode": MODE})
 
 @app.route('/api/incident/<ip>/action', methods=['POST'])
+@login_required
 def incident_action(ip):
     action = request.json.get('action')
     if ip in incidents and action == "RESOLVE":
@@ -200,6 +226,7 @@ def incident_action(ip):
     return jsonify({"success": True})
 
 @app.route('/api/demo_attack')
+@login_required
 def trigger_demo():
     if MODE == "LIVE": return jsonify({"status": "Disabled in LIVE mode"})
     def execute_chain():
@@ -207,7 +234,7 @@ def trigger_demo():
         chain =["Connection refused on port 3389", "Failed password for admin from 185.15.59.222 port 22", "Executed: powershell.exe -enc SQBFAFgA", "sudo: 3 incorrect password attempts"]
         with open(SIMULATED_LOG_FILE, 'a') as f:
             for act in chain:
-                f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [WARN] [{ip}] [{host}] {act}\n")
+                f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][WARN] [{ip}] [{host}] {act}\n")
                 time.sleep(1)
     threading.Thread(target=execute_chain).start()
     return jsonify({"status": "Launched"})
