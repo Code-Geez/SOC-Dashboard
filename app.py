@@ -50,7 +50,7 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        if username == 'admin' and password == 'nexus2026':
+        if username == 'admin' and password == 'codegeez2026':
             session['logged_in'] = True
             return redirect(url_for('index'))
         else:
@@ -66,7 +66,7 @@ def send_discord_alert(inc_id, ip, target, threat_type):
     if not DISCORD_WEBHOOK_URL: return
     data = {
         "content": f"🚨 **CRITICAL INCIDENT DETECTED: {inc_id}** 🚨",
-        "embeds":[{"title": threat_type, "color": 16711680, "fields":[{"name": "Attacker IP", "value": ip, "inline": True}, {"name": "Target Host", "value": target, "inline": True}, {"name": "Status", "value": "Awaiting SOAR Playbook Execution", "inline": False}], "footer": {"text": "Nexus SOAR Platform"}}]
+        "embeds":[{"title": threat_type, "color": 16711680, "fields":[{"name": "Attacker IP", "value": ip, "inline": True}, {"name": "Target Host", "value": target, "inline": True}, {"name": "Status", "value": "Awaiting SOAR Playbook Execution", "inline": False}], "footer": {"text": "Code Ge'ez SOAR Platform"}}]
     }
     try:
         req = urllib.request.Request(DISCORD_WEBHOOK_URL, data=json.dumps(data).encode(), headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}, method='POST')
