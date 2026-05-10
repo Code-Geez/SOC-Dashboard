@@ -41,61 +41,66 @@ KILL_CHAIN = {
 }
 
 # --- DATABASE ENGINE (SQLITE) ---
+db_lock = threading.Lock()
+
 def init_db():
-    """Initializes the database tables if they do not exist."""
-    with sqlite3.connect(DB_FILE) as conn:
-        c = conn.cursor()
-        c.execute('CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, json_data TEXT)')
-        c.execute('CREATE TABLE IF NOT EXISTS incidents (ip TEXT PRIMARY KEY, json_data TEXT)')
-        c.execute('CREATE TABLE IF NOT EXISTS endpoints (host TEXT PRIMARY KEY, state TEXT)')
-        conn.commit()
+    with db_lock:
+        with sqlite3.connect(DB_FILE, timeout=10) as conn:
+            c = conn.cursor()
+            c.execute('CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, json_data TEXT)')
+            c.execute('CREATE TABLE IF NOT EXISTS incidents (ip TEXT PRIMARY KEY, json_data TEXT)')
+            c.execute('CREATE TABLE IF NOT EXISTS endpoints (host TEXT PRIMARY KEY, state TEXT)')
+            conn.commit()
 
 def load_db():
-    """Loads historical data from the database into RAM on startup."""
     global alerts, incidents, endpoints_state, incident_counter
     try:
-        with sqlite3.connect(DB_FILE) as conn:
-            c = conn.cursor()
-            
-            c.execute('SELECT json_data FROM alerts ORDER BY id ASC')
-            for row in c.fetchall(): alerts.insert(0, json.loads(row[0]))
+        with db_lock:
+            with sqlite3.connect(DB_FILE, timeout=10) as conn:
+                c = conn.cursor()
                 
-            c.execute('SELECT ip, json_data FROM incidents')
-            for row in c.fetchall():
-                ip, data = row[0], json.loads(row[1])
-                data['stages'] = set(data['stages'])
-                data['mitre_ids'] = set(data['mitre_ids'])
-                incidents[ip] = data
-                
-            c.execute('SELECT host, state FROM endpoints')
-            for row in c.fetchall(): endpoints_state[row[0]] = row[1]
+                c.execute('SELECT json_data FROM alerts ORDER BY id ASC')
+                for row in c.fetchall(): alerts.insert(0, json.loads(row[0]))
+                    
+                c.execute('SELECT ip, json_data FROM incidents')
+                for row in c.fetchall():
+                    ip, data = row[0], json.loads(row[1])
+                    data['stages'] = set(data['stages'])
+                    data['mitre_ids'] = set(data['mitre_ids'])
+                    incidents[ip] = data
+                    
+                c.execute('SELECT host, state FROM endpoints')
+                for row in c.fetchall(): endpoints_state[row[0]] = row[1]
 
-            if incidents:
-                max_id = max([int(inc['id'].split('-')[1]) for inc in incidents.values()])
-                incident_counter = max_id + 1
+                if incidents:
+                    max_id = max([int(inc['id'].split('-')[1]) for inc in incidents.values()])
+                    incident_counter = max_id + 1
     except Exception as e: print(f"[*] Starting fresh database. ({e})")
 
 def save_alert_db(alert):
-    with sqlite3.connect(DB_FILE) as conn:
-        conn.cursor().execute('INSERT OR REPLACE INTO alerts (id, json_data) VALUES (?, ?)', (alert['id'], json.dumps(alert)))
+    with db_lock:
+        with sqlite3.connect(DB_FILE, timeout=10) as conn:
+            conn.cursor().execute('INSERT OR REPLACE INTO alerts (id, json_data) VALUES (?, ?)', (alert['id'], json.dumps(alert)))
 
 def save_incident_db(ip, inc):
     inc_copy = inc.copy()
     inc_copy['stages'] = list(inc['stages'])
     inc_copy['mitre_ids'] = list(inc['mitre_ids'])
-    with sqlite3.connect(DB_FILE) as conn:
-        conn.cursor().execute('INSERT OR REPLACE INTO incidents (ip, json_data) VALUES (?, ?)', (ip, json.dumps(inc_copy)))
+    with db_lock:
+        with sqlite3.connect(DB_FILE, timeout=10) as conn:
+            conn.cursor().execute('INSERT OR REPLACE INTO incidents (ip, json_data) VALUES (?, ?)', (ip, json.dumps(inc_copy)))
 
 def save_endpoint_db(host, state):
-    with sqlite3.connect(DB_FILE) as conn:
-        conn.cursor().execute('INSERT OR REPLACE INTO endpoints (host, state) VALUES (?, ?)', (host, state))
+    with db_lock:
+        with sqlite3.connect(DB_FILE, timeout=10) as conn:
+            conn.cursor().execute('INSERT OR REPLACE INTO endpoints (host, state) VALUES (?, ?)', (host, state))
 
 def clear_db():
-    """Wipes the database when switching between LIVE and SIMULATED modes."""
-    with sqlite3.connect(DB_FILE) as conn:
-        conn.cursor().execute('DELETE FROM alerts')
-        conn.cursor().execute('DELETE FROM incidents')
-        conn.commit()
+    with db_lock:
+        with sqlite3.connect(DB_FILE, timeout=10) as conn:
+            conn.cursor().execute('DELETE FROM alerts')
+            conn.cursor().execute('DELETE FROM incidents')
+            conn.commit()
 
 # --- AUTHENTICATION DECORATOR ---
 def login_required(f):
@@ -138,7 +143,7 @@ def register_alert(timestamp, threat_type, severity, ip, host, raw_action):
     alert = {"id": f"ALT-{len(alerts)+1}", "timestamp": timestamp, "type": threat_type, "severity": severity, "ip": ip, "host": host, "stage": meta['stage'], "mitre": meta['mitre'], "geo": GEO_DB.get(ip, {"lat": 0, "lng": 0, "country": "Unknown"}), "pcap": generate_hex_dump(f"IP {ip} > {host} : {raw_action}"), "raw": raw_action}
     
     alerts.insert(0, alert)
-    save_alert_db(alert) # PERSIST TO DB
+    save_alert_db(alert)
     
     if host in endpoints_state and severity in ["HIGH", "CRITICAL"]: 
         endpoints_state[host] = "Compromised"
@@ -165,7 +170,7 @@ def register_alert(timestamp, threat_type, severity, ip, host, raw_action):
             inc['severity'] = severity
         inc['type'] = threat_type
 
-    save_incident_db(ip, inc) # PERSIST TO DB
+    save_incident_db(ip, inc)
 
     if is_new_critical: send_discord_alert(inc['id'], ip, host, inc['type'])
     if len(alerts) > 200: alerts.pop()
@@ -232,7 +237,7 @@ def toggle_mode():
     alerts.clear()
     incidents.clear()
     endpoints_state = {k: "Clean" for k in endpoints_state}
-    clear_db() # Clear DB so modes don't mix
+    clear_db()
     return jsonify({"status": "success", "mode": MODE})
 
 @app.route('/api/vt/<ip>')
@@ -288,7 +293,7 @@ def trigger_demo():
     return jsonify({"status": "Launched"})
 
 if __name__ == '__main__':
-    init_db()  # Initialize the SQL Database
-    load_db()  # Load historical alerts into RAM
+    init_db()
+    load_db()
     threading.Thread(target=tail_journalctl, daemon=True).start()
     app.run(host='0.0.0.0', port=5000, debug=False)
