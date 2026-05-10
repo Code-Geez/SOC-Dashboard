@@ -45,62 +45,79 @@ db_lock = threading.Lock()
 
 def init_db():
     with db_lock:
-        with sqlite3.connect(DB_FILE, timeout=10) as conn:
-            c = conn.cursor()
-            c.execute('CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, json_data TEXT)')
-            c.execute('CREATE TABLE IF NOT EXISTS incidents (ip TEXT PRIMARY KEY, json_data TEXT)')
-            c.execute('CREATE TABLE IF NOT EXISTS endpoints (host TEXT PRIMARY KEY, state TEXT)')
-            conn.commit()
+        conn = sqlite3.connect(DB_FILE, timeout=10)
+        c = conn.cursor()
+        c.execute('CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, json_data TEXT)')
+        c.execute('CREATE TABLE IF NOT EXISTS incidents (ip TEXT PRIMARY KEY, json_data TEXT)')
+        c.execute('CREATE TABLE IF NOT EXISTS endpoints (host TEXT PRIMARY KEY, state TEXT)')
+        conn.commit()
+        conn.close()
 
 def load_db():
     global alerts, incidents, endpoints_state, incident_counter
     try:
         with db_lock:
-            with sqlite3.connect(DB_FILE, timeout=10) as conn:
-                c = conn.cursor()
+            conn = sqlite3.connect(DB_FILE, timeout=10)
+            c = conn.cursor()
+            
+            c.execute('SELECT json_data FROM alerts ORDER BY id ASC')
+            for row in c.fetchall(): alerts.insert(0, json.loads(row[0]))
                 
-                c.execute('SELECT json_data FROM alerts ORDER BY id ASC')
-                for row in c.fetchall(): alerts.insert(0, json.loads(row[0]))
-                    
-                c.execute('SELECT ip, json_data FROM incidents')
-                for row in c.fetchall():
-                    ip, data = row[0], json.loads(row[1])
-                    data['stages'] = set(data['stages'])
-                    data['mitre_ids'] = set(data['mitre_ids'])
-                    incidents[ip] = data
-                    
-                c.execute('SELECT host, state FROM endpoints')
-                for row in c.fetchall(): endpoints_state[row[0]] = row[1]
+            c.execute('SELECT ip, json_data FROM incidents')
+            for row in c.fetchall():
+                ip, data = row[0], json.loads(row[1])
+                data['stages'] = set(data['stages'])
+                data['mitre_ids'] = set(data['mitre_ids'])
+                incidents[ip] = data
+                
+            c.execute('SELECT host, state FROM endpoints')
+            for row in c.fetchall(): endpoints_state[row[0]] = row[1]
 
-                if incidents:
-                    max_id = max([int(inc['id'].split('-')[1]) for inc in incidents.values()])
-                    incident_counter = max_id + 1
+            if incidents:
+                max_id = max([int(inc['id'].split('-')[1]) for inc in incidents.values()])
+                incident_counter = max_id + 1
+            conn.close()
     except Exception as e: print(f"[*] Starting fresh database. ({e})")
 
 def save_alert_db(alert):
-    with db_lock:
-        with sqlite3.connect(DB_FILE, timeout=10) as conn:
+    try:
+        with db_lock:
+            conn = sqlite3.connect(DB_FILE, timeout=10)
             conn.cursor().execute('INSERT OR REPLACE INTO alerts (id, json_data) VALUES (?, ?)', (alert['id'], json.dumps(alert)))
+            conn.commit()
+            conn.close()
+    except Exception as e: print(f"DB Error: {e}")
 
 def save_incident_db(ip, inc):
-    inc_copy = inc.copy()
-    inc_copy['stages'] = list(inc['stages'])
-    inc_copy['mitre_ids'] = list(inc['mitre_ids'])
-    with db_lock:
-        with sqlite3.connect(DB_FILE, timeout=10) as conn:
+    try:
+        inc_copy = inc.copy()
+        inc_copy['stages'] = list(inc['stages'])
+        inc_copy['mitre_ids'] = list(inc['mitre_ids'])
+        with db_lock:
+            conn = sqlite3.connect(DB_FILE, timeout=10)
             conn.cursor().execute('INSERT OR REPLACE INTO incidents (ip, json_data) VALUES (?, ?)', (ip, json.dumps(inc_copy)))
+            conn.commit()
+            conn.close()
+    except Exception as e: print(f"DB Error: {e}")
 
 def save_endpoint_db(host, state):
-    with db_lock:
-        with sqlite3.connect(DB_FILE, timeout=10) as conn:
+    try:
+        with db_lock:
+            conn = sqlite3.connect(DB_FILE, timeout=10)
             conn.cursor().execute('INSERT OR REPLACE INTO endpoints (host, state) VALUES (?, ?)', (host, state))
+            conn.commit()
+            conn.close()
+    except Exception as e: print(f"DB Error: {e}")
 
 def clear_db():
-    with db_lock:
-        with sqlite3.connect(DB_FILE, timeout=10) as conn:
+    try:
+        with db_lock:
+            conn = sqlite3.connect(DB_FILE, timeout=10)
             conn.cursor().execute('DELETE FROM alerts')
             conn.cursor().execute('DELETE FROM incidents')
             conn.commit()
+            conn.close()
+    except Exception as e: print(f"DB Clear Error: {e}")
 
 # --- AUTHENTICATION DECORATOR ---
 def login_required(f):
@@ -204,7 +221,8 @@ def analyze_live_log(line):
         if "failed password" in line_lower or "authentication failure" in line_lower:
             threat_type, severity = "SSH Brute Force Detected", "HIGH"
     
-    if threat_type: register_alert(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), threat_type, severity, ip, "KALI-LOCAL", line.strip())
+    if threat_type: 
+        register_alert(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), threat_type, severity, ip, "KALI-LOCAL", line.strip())
 
 def tail_journalctl():
     try:
@@ -233,11 +251,14 @@ def index(): return render_template('index.html')
 @login_required
 def toggle_mode():
     global MODE, alerts, incidents, endpoints_state
-    MODE = request.json.get('mode', 'SIMULATED')
+    
+    req_data = request.get_json(silent=True) or {}
+    MODE = req_data.get('mode', 'SIMULATED')
+    
     alerts.clear()
     incidents.clear()
     endpoints_state = {k: "Clean" for k in endpoints_state}
-    clear_db()
+    clear_db() 
     return jsonify({"status": "success", "mode": MODE})
 
 @app.route('/api/vt/<ip>')
@@ -287,7 +308,7 @@ def trigger_demo():
         chain =["Connection refused on port 3389", "Failed password for admin from 185.15.59.222 port 22", "Executed: powershell.exe -enc SQBFAFgA", "sudo: 3 incorrect password attempts"]
         with open(SIMULATED_LOG_FILE, 'a') as f:
             for act in chain:
-                f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][WARN][185.15.59.222] [WIN-DC01] {act}\n")
+                f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [WARN][185.15.59.222] [WIN-DC01] {act}\n")
                 time.sleep(1)
     threading.Thread(target=execute_chain).start()
     return jsonify({"status": "Launched"})
