@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  codegeez-soar:
+    build: .
+    container_name: codegeez_soar_platform
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-super-secret-codegeez-key-2026}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - VT_API_KEY=${VT_API_KEY}
+    restart: unless-stopped

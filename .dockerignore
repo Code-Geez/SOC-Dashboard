@@ -1,0 +1,6 @@
+venv/
+__pycache__/
+*.pyc
+.env
+simulated_logs.txt
+.git/
